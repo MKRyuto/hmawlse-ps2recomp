@@ -1,4 +1,0 @@
-# Unix launchers must still run when the checkout was made on Windows.
-*.sh text eol=lf
-*.desktop text eol=lf
-site/public/Dockerfile text eol=lf

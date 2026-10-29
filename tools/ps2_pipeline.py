@@ -260,9 +260,6 @@ def locate_tool(name: str) -> Path | None:
         ROOT / "build" / "PS2Recomp" / "ps2xRecomp" / "Release" / name,
         ROOT / "build" / "ps2recomp" / name,
         ROOT / "build" / "ps2recomp" / "Release" / name,
-        ROOT / "vendor" / "PS2Recomp" / "out" / "build" / name,
-        ROOT / "vendor" / "PS2Recomp" / "out" / "build" / "Debug" / name,
-        ROOT / "vendor" / "PS2Recomp" / "out" / "build" / "Release" / name,
     ]
     suffixes = ["", ".exe"]
     for candidate in candidates:
@@ -316,7 +313,7 @@ def import_decomp(iso_path: Path, workspace: Path, toolchain: str) -> int:
 
 def build_tools() -> int:
     build = ROOT / "build" / "PS2Recomp"
-    source = ROOT / "vendor" / "PS2Recomp"
+    source = ROOT
     build.mkdir(parents=True, exist_ok=True)
     visual_studio = Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools")
     if visual_studio.is_dir():

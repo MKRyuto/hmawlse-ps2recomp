@@ -54,12 +54,20 @@ tools/__pycache__/
 .DS_Store
 Thumbs.db
 
-# Vendor-local build output
-vendor/**/build/
-vendor/**/out/
-vendor/**/.cache/
 
 # Public evidence excerpts are intentionally allowed
-!docs/evidence/
-!docs/evidence/*.log
-!docs/evidence/*.err
+!games/hmawlse/docs/evidence/
+!games/hmawlse/docs/evidence/*.log
+!games/hmawlse/docs/evidence/*.err
+
+# PS2Recomp generated game translation and local build state
+bin/
+intermediate/
+out/
+ps2xRuntime/include/ps2_recompiled_functions.h
+ps2xRuntime/include/ps2_recompiled_stubs.h
+ps2xRuntime/src/runner/
+ps2xRuntime/output/
+android/.cxx/
+android/.gradle/
+android/local.properties
