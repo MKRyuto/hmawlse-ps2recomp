@@ -28,17 +28,41 @@ VIF has not reached later title rendering packets. The first observed VIF activi
 
 ## Parallel investigation while awaiting community feedback
 
-Feedback is useful but is not the only workstream. A clean local run without the status-2 bypass already narrows the failure:
+Feedback is useful but is not the only workstream. Clean local runs without the
+status-2 bypass now narrow the failure to the resource completion data path:
 
-- The generated getter at guest `0x1196F8` reads only byte `object+1`; it does not write the resource state.
-- The consumer at `0x17A750` accepts status `0x3` as complete. Status `0x2` returns to the polling path, so treating `0x2` as complete would be an experiment, not a faithful fix.
-- The IOP path executes DVCI `0x400`, invokes the guest callback, and returns a buffer. That proves dispatch reaches the callback; it does not prove that the callback updates `0x49DA78+1`.
-- Static control-flow now shows `0x17A560 -> 0x11AD00 -> 0x132190` registering callback target `0x17A5C0` in queue table `0x5DC770`. The registered `0x17A5C0` handler only adjusts/restores the stack and returns; this is a lead, not proof that it is the missing status writer.
-- `0x132150` and `0x132190` are separate entry points sharing generated file `sub_001320F8_0x1320f8.cpp`; the runtime function table maps both entries, so this is not currently explained by a missing entry-point dispatch.
+- The generated getter at guest `0x1196F8` reads only byte `object+1`; it does
+  not write the resource state.
+- The consumer at `0x17A750` accepts status `0x3` as complete. Status `0x2`
+  returns to the polling path, so treating `0x2` as complete would be an
+  experiment, not a faithful fix.
+- The target resource object `0x49DA78` is written to status `0x1` at
+  `0x1189B8` and status `0x2` at `0x118EEC`. The status-3 branch at
+  `0x118EB4` is not taken because the load still has remaining work.
+- On the resume path, `0x119370` calls completion helper `0x11FDA0` with
+  source object `0x4AC0C8`. The helper reads source `+0x8 = 0x5D9CA0` and
+  source `+0x58 = 0`, then returns `0`; the resource status is set back to
+  `0x1`.
+- Source initialization at `0x11F8E8` and slot allocation at `0x11FAC0` were
+  reached for `0x4AC0C8` with zero callback/data arguments. The observed
+  source `+0x58` writes are only `0` from `0x11FD84`; no completion value was
+  observed.
+- The IOP path executes DVCI `0x400`/`0x422`, invokes EE callback `0x1303E0`,
+  and returns buffers. The callback dispatches queue table `0x5DC770` to
+  handler `0x17A5C0`, whose generated body only adjusts/restores the stack and
+  returns. This proves dispatch reaches the callback; it does not prove that
+  the callback updates the target resource.
+- The work queue at `0x5DC760` invokes `0x11A008` with argument `0`; it is a
+  separate maintenance queue, not the target completion transition.
+- `0x132150` and `0x132190` are separate entry points sharing generated file
+  `sub_001320F8_0x1320f8.cpp`; the runtime function table maps both entries,
+  so this is not currently explained by a missing entry-point dispatch.
 
-- The clean no-bypass run remains in the `0x17A868`/`0x17A87C` polling path while the host surface stays black. This is the baseline for further traces.
-
-The next local experiment is to identify the exact writer of `object+1` and correlate it with the callback/queue path. No new bypass will be published as a fix.
+- The clean no-bypass run remains in the `0x17A868`/`0x17A87C` polling path
+  while the host surface stays black. The next experiment is a temporary
+  memory-write hook for exact writes overlapping `0x4AC0D0` or `0x4AC120`,
+  which identifies the writer of source `+0x8`/`+0x58` without changing game
+  semantics.
 
 ## Evidence
 
