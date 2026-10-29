@@ -1,0 +1,65 @@
+# User-owned and copyrighted disc data
+*.iso
+*.ISO
+SLUS_*
+SYSTEM.CNF
+MODULES/
+DATA*.AFS
+DATA*.DAT
+DATA*.BIN
+PAD*.BIN
+
+# Generated local analysis, runtime, and build state
+artifacts/
+build/
+mc0/
+mc1/
+ps2_log.txt
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.err
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.d
+*.tmp
+
+# Local Python environments and caches
+.venv/
+**/__pycache__/
+*.py[cod]
+
+# Downloaded tool archives and unpacked local tools
+tools/*.zip
+tools/*.7z
+tools/*.tar
+tools/*.tar.*
+tools/ghidra_*/
+tools/pcsx2/
+tools/__pycache__/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.user
+*.suo
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Vendor-local build output
+vendor/**/build/
+vendor/**/out/
+vendor/**/.cache/
+
+# Public evidence excerpts are intentionally allowed
+!docs/evidence/
+!docs/evidence/*.log
+!docs/evidence/*.err

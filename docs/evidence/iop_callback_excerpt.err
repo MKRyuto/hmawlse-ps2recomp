@@ -1,0 +1,13 @@
+# Source: artifacts/resourcestatus2.err, latest diagnostic run
+# Local absolute paths and unrelated trace lines removed.
+[ps2xIOP] [IOP DVCI] fn=0x400 server=0x68120 buffer=0x72b60 gp=0x79fe0 send=0x5da140/16 recv=0x5da240/4
+[ps2xIOP] [IOP server-return] v0=0x469856 pc=0x536870660 stopped=1 yielded=0
+[ps2xIOP] [IOP worker] address=0x68274 object=0x72b60 cb=0x0 cbArg=0x0 field12=0x4bae6c field16=0x0
+[ps2xIOP] [IOP direct-callback] fn=0x1246176
+[ps2xIOP] [EE callback] address=0x1303e0 a0=0x4ba170 a1=0x4b3368 a2=0x10 a3=0x0
+[ps2xIOP] [EE callback-result] pc=0x0 steps=7 v0=0x5dc770 gp=0x0
+[ps2xIOP] [IOP DVCI result] fn=0x400 return=0x72b60 buf: 0x79314 0x788d0 0x1 0x4bae6c
+[ps2xIOP] [IOP DVCI] fn=0x422 server=0x68120 buffer=0x72b60 gp=0x79fe0 send=0x5da140/12 recv=0x5da240/4
+[ps2xIOP] [IOP server-return] v0=0x469856 pc=0x536870660 stopped=1 yielded=0
+[ps2xIOP] [IOP worker] address=0x68274 object=0x72b60 cb=0x0 cbArg=0x0 field12=0x4bae6c field16=0x0
+[ps2xIOP] [IOP DVCI result] fn=0x422 return=0x72b60 buf: 0x78900 0x1f0a40 0x100 0x4bae6c mem@0x1f0a40: 0x1f0a50 0x0 0x0 0x0
