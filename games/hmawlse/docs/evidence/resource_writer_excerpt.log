@@ -1,0 +1,22 @@
+Target: guest resource object 0x49DA78
+Source object: 0x4AC0C8
+Observed no-bypass runtime: artifacts/trace-sif-resource.log
+
+[resource-source-slot] source=0x4ac0c8 field8-arg=0x0 field0c-arg=0x0 field10-arg=0x0 callback-arg=0x0
+[resource-source-init] source=0x4ac0c8 field8-arg=0x0 field0c-arg=0x0 field10-arg=0x0 callback-arg=0x0
+[resource-memory-write] pc=0x11f958 addr=0x4ac0d0 size=0x4 valueLo=0x0 valueHi=0x0 op=WRITE32
+[resource-memory-write] pc=0x11f988 addr=0x4ac120 size=0x4 valueLo=0x0 valueHi=0x0 op=WRITE32
+[resource-status-write] pc=0x1189b8 object=0x49da78 value=0x1
+[resource-memory-write] pc=0x12035c addr=0x4ac0d0 size=0x4 valueLo=0x5d9ca0 valueHi=0x0 op=WRITE32
+[resource-memory-write] pc=0x11fd84 addr=0x4ac120 size=0x4 valueLo=0x0 valueHi=0x0 op=WRITE32
+[resource-progress-enter] object=0x49da78 status=0x1 progress=0x0 total=0x0
+[resource-status-branch] object=0x49da78 remaining=0x1 end=0x0 loaded=0x0 base=0x1 field0c=0x2fc62 field14=0x0 field30=0x0
+[resource-status-write] pc=0x118eec object=0x49da78 value=0x2
+[resource-work-queue] table=0x5dc760 fn=0x11a008 arg=0x0 word8=0x11a090 resource-status=0x2
+[resource-status-get] pc=0x1196f8 object=0x49da78 b1=0x2 w4=0x4ac0c8
+
+Interpretation:
+- 0x12035C is the exact guest store that writes source+0x8 (0x4AC0D0) to 0x5D9CA0.
+- The write is not an IOP-host RPC receive write or SIF IOP-to-EE DMA write in this run.
+- The source callback/data arguments are zero at initialization; source+0x58 remains zero.
+- This identifies the next guest-side call chain to inspect: 0x1202B0 -> 0x125008 and the completion check at 0x11FDA0.

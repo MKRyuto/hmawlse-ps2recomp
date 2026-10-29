@@ -43,6 +43,10 @@ status-2 bypass now narrow the failure to the resource completion data path:
   source object `0x4AC0C8`. The helper reads source `+0x8 = 0x5D9CA0` and
   source `+0x58 = 0`, then returns `0`; the resource status is set back to
   `0x1`.
+- A targeted no-bypass trace identifies the exact write of source `+0x8`:
+  guest `0x12035C` stores `0x5D9CA0` to `0x4AC0D0`. The store is inside
+  worker `0x1202B0`, immediately after call `0x125008`; it is not an IOP
+  host receive or SIF DMA write in this run.
 - Source initialization at `0x11F8E8` and slot allocation at `0x11FAC0` were
   reached for `0x4AC0C8` with zero callback/data arguments. The observed
   source `+0x58` writes are only `0` from `0x11FD84`; no completion value was
@@ -58,19 +62,18 @@ status-2 bypass now narrow the failure to the resource completion data path:
   `sub_001320F8_0x1320f8.cpp`; the runtime function table maps both entries,
   so this is not currently explained by a missing entry-point dispatch.
 
-- A targeted SIF `writeEeRange` hook was attempted, but the existing generated
-  build invalidated its PCH and began rebuilding thousands of generated objects;
-  the hook was reverted and produced no runtime evidence.
-- Static review found a second concrete IOP-to-EE path in
-  `ps2xIOP/src/emulator/services/iop_rpc.cpp`: the RPC receive path copies
-  `returnPointer` bytes to `request.receive.address` through
-  `m_host.writeGuest`. No current trace records that destination, so this is
-  the next targeted instrumentation point; it may explain the source-field
-  update without changing game semantics.
+- Targeted hooks for `IopHost::writeGuest` and SIF `writeEeRange` produced no
+  writes overlapping `0x4AC0D0`/`0x4AC120` in the same run. This rules out
+  those two host-side transfer paths for the observed source-field update.
+- The exact guest write and the surrounding function bodies are captured in
+  [`resource_writer_excerpt.log`](evidence/resource_writer_excerpt.log). The
+  next investigation is the `0x1202B0 -> 0x125008` call chain and why the
+  source was initialized with a zero callback/data tuple.
 
 ## Evidence
 
 - [`resource_status_excerpt.log`](evidence/resource_status_excerpt.log)
+- [`resource_writer_excerpt.log`](evidence/resource_writer_excerpt.log)
 - [`iop_callback_excerpt.err`](evidence/iop_callback_excerpt.err)
 - Local-only screenshot: `artifacts/runtime_surface_45s.png`
 - Community post draft: [`COMMUNITY_HELP.md`](COMMUNITY_HELP.md)
