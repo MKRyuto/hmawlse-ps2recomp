@@ -93,10 +93,18 @@ README.md
 .recomp.json
 tools/                  Reproducibility scripts only
 docs/                   Public status and community issue material
-vendor/                 PS2Recomp and decompdecomp source snapshots
+vendor/                 PS2Recomp and decompdecomp pinned submodules
 artifacts/              Local ISO/decomp/runtime output; ignored
 build/                  Local native build output; ignored
 ```
+
+Clone with dependency sources:
+
+```powershell
+git clone --recurse-submodules <repository-url>
+```
+
+The public repository contains upstream submodule pointers. Local diagnostic edits used during runtime bring-up are still uncommitted inside the PS2Recomp working tree and are not represented as upstream commits.
 
 ## Resuming the investigation
 
