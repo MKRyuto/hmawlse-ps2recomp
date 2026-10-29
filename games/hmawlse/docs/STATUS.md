@@ -58,11 +58,15 @@ status-2 bypass now narrow the failure to the resource completion data path:
   `sub_001320F8_0x1320f8.cpp`; the runtime function table maps both entries,
   so this is not currently explained by a missing entry-point dispatch.
 
-- The clean no-bypass run remains in the `0x17A868`/`0x17A87C` polling path
-  while the host surface stays black. The next experiment is a temporary
-  memory-write hook for exact writes overlapping `0x4AC0D0` or `0x4AC120`,
-  which identifies the writer of source `+0x8`/`+0x58` without changing game
-  semantics.
+- A targeted SIF `writeEeRange` hook was attempted, but the existing generated
+  build invalidated its PCH and began rebuilding thousands of generated objects;
+  the hook was reverted and produced no runtime evidence.
+- Static review found a second concrete IOP-to-EE path in
+  `ps2xIOP/src/emulator/services/iop_rpc.cpp`: the RPC receive path copies
+  `returnPointer` bytes to `request.receive.address` through
+  `m_host.writeGuest`. No current trace records that destination, so this is
+  the next targeted instrumentation point; it may explain the source-field
+  update without changing game semantics.
 
 ## Evidence
 
