@@ -26,6 +26,19 @@ DVCI functions `0x400` and `0x422` execute and the EE callback at `0x1303E0` run
 
 VIF has not reached later title rendering packets. The first observed VIF activity only uploads VU1 microcode, so GS work is not the first confirmed blocker.
 
+## Parallel investigation while awaiting community feedback
+
+Feedback is useful but is not the only workstream. A clean local run without the status-2 bypass already narrows the failure:
+
+- The generated getter at guest `0x1196F8` reads only byte `object+1`; it does not write the resource state.
+- The consumer at `0x17A750` accepts status `0x3` as complete. Status `0x2` returns to the polling path, so treating `0x2` as complete would be an experiment, not a faithful fix.
+- The IOP path executes DVCI `0x400`, invokes the guest callback, and returns a buffer. That proves dispatch reaches the callback; it does not prove that the callback updates `0x49DA78+1`.
+- The callback `0x1303E0` enters the guest queue path `0x12F668 -> 0x131C88`, which dispatches registered function pointers from the queue table. Neither callback wrapper directly writes the resource status byte, so the next trace must identify the queued handler and its target object.
+
+- The clean no-bypass run remains in the `0x17A868`/`0x17A87C` polling path while the host surface stays black. This is the baseline for further traces.
+
+The next local experiment is to identify the exact writer of `object+1` and correlate it with the callback/queue path. No new bypass will be published as a fix.
+
 ## Evidence
 
 - [`resource_status_excerpt.log`](evidence/resource_status_excerpt.log)
