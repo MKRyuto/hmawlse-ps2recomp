@@ -1,0 +1,603 @@
+"use strict";  // each script is strict on its own (see base.js)
+/* ------------------------------------------------------------------ home */
+let picked = null;
+
+/* Once, after this version's first start: the old `decomp mcp` entries it took out of the agents' settings
+   (app/cleanup.py), each a sentence from the app, until the user dismisses them. Those entries started decompdecomp
+   again whenever it was closed. */
+function renderBridgesNotice() {
+  const st = S.st || {}, removed = Array.isArray(st.bridges_removed) ? st.bridges_removed : [];
+  const box = $("bridgesNotice");
+  box.hidden = !removed.length || !!(st.settings && st.settings.bridges_removed_seen);
+  if (box.hidden) return;
+  setHtml(box, `<span><b>decompdecomp removed its old connection from your agents.</b> It isn't needed any more: helpers get
+    what they need from the app itself.<ul class="small">${removed.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></span>
+    <button class="ghost small-btn" type="button" id="bridgesOk">Dismiss</button>`);
+  $("bridgesOk").onclick = async () => {
+    box.hidden = true;
+    try { S.st.settings = await api("/api/settings", { method: "POST", body: { bridges_removed_seen: true } }); } catch { /* it shows again next time */ }
+  };
+}
+
+async function showHome() {
+  show("home");
+  resetDrop();
+  loadState().catch(() => {});  // the version and the compiler lists: the projects don't wait for them
+  let projects;
+  try { projects = S.projects = await api("/api/projects"); } catch { projects = S.projects || []; }
+  renderNav();
+  const box = $("projects");
+  box.innerHTML = "";
+  $("recent").hidden = !projects.length;
+  $("home").classList.toggle("returning", projects.length > 0);  // your projects first once you have some
+  for (const p of projects) {
+    const pct = codePct(p);
+    const a = document.createElement("a");
+    a.className = "card";
+    a.href = `#/p/${p.slug}`;
+    if (p.broken) {
+      a.innerHTML = `<div class="cc-top"><span class="plat">?</span></div><div><h4>${esc(p.title)}</h4>
+        <p class="meta err-text">Can't be opened: ${esc(p.broken)}</p></div>`;
+      box.append(a);
+      continue;
+    }
+    const meta = p.kind === "fork"
+      ? `${p.origin === "scratch" ? "from scratch" : "public decomp"}${p.version ? " · " + esc(p.version) : ""}${p.ready ? "" : " · needs setup"}`
+      : `${esc(p.rom?.game_code || "")}${p.rom?.region ? " · " + esc(p.rom.region) : ""} · ${esc(p.compiler?.name || "")}`;
+    a.innerHTML = `<div class="cc-top"><span class="plat">${esc(p.platform_name || "?")}</span><span class="grow"></span><span class="meta">${esc(since(p.last_activity))}</span><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span></div>
+      <div><h4>${esc(p.title)}</h4><p class="meta">${meta}</p></div>
+      <div class="meter"><i></i></div><p class="meta"><b>${pctNum(pct)}%</b> of code · ${(p.matched || 0).toLocaleString()} / ${cFunctions(p).toLocaleString()} functions</p>`;
+    box.append(a);
+    requestAnimationFrame(() => { a.querySelector(".meter i").style.width = pct + "%"; });
+  }
+}
+
+function resetDrop() {
+  picked = null;
+  $("dropIdle").hidden = false;
+  $("dropPicked").hidden = true;
+  $("dropBusy").hidden = true;
+  $("dropError").hidden = true;
+  $("own").checked = false;
+  $("analyse").disabled = true;
+  $("file").value = "";
+}
+
+const drop = $("drop");
+drop.addEventListener("click", (e) => { if (!$("dropIdle").hidden && !e.target.closest("button")) $("file").click(); });
+drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !$("dropIdle").hidden && e.target === drop) { e.preventDefault(); $("file").click(); } });
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  // a folder doesn't come through the browser: the path dialog reads it where it is (a PC game's .exe and its DLLs)
+  if (e.dataTransfer.items?.[0]?.webkitGetAsEntry?.()?.isDirectory) return askPath("That's a folder: give its path here, and decompdecomp reads the game from it where it is.");
+  pickFiles(e.dataTransfer.files);
+});
+$("file").addEventListener("change", () => pickFiles($("file").files));
+/* A game, and the debug information that may come with it (a PC game's .pdb or linker .map: its import reads them). */
+const DEBUG_FILE = /\.(pdb|map)$/i;
+function pickFiles(list) {
+  const files = [...list], debug = files.filter((f) => DEBUG_FILE.test(f.name));
+  const game = files.find((f) => !debug.includes(f)) || files[0];
+  if (game) pickFile(game, debug.filter((f) => f !== game));
+}
+$("own").addEventListener("change", updateAnalyse);
+$("cancelPick").onclick = resetDrop;
+
+/* Read the header in the browser so the user sees what they picked before anything happens. */
+function parseRom(buf) {
+  const b = new Uint8Array(buf);
+  const magic = [b[0], b[1], b[2], b[3]].map((x) => x.toString(16).padStart(2, "0")).join("");
+  const order = { "80371240": "z64", "37804012": "v64", "40123780": "n64" }[magic];
+  if (!order) throw new Error("This doesn't look like an N64 ROM (.z64, .n64 or .v64).");
+  const z = new Uint8Array(Math.min(b.length, 0x101000));
+  for (let i = 0; i < z.length; i += 4) {
+    const w = order === "z64" ? [b[i], b[i + 1], b[i + 2], b[i + 3]] : order === "v64" ? [b[i + 1], b[i], b[i + 3], b[i + 2]] : [b[i + 3], b[i + 2], b[i + 1], b[i]];
+    z.set(w, i);
+  }
+  const text = (from, to) => Array.from(z.slice(from, to)).map((c) => (c >= 32 && c < 127 ? String.fromCharCode(c) : "")).join("").trim();
+  const dv = new DataView(z.buffer);
+  let jumps = 0, branches = 0;
+  for (let i = 0x1000; i + 4 <= z.length; i += 4) {
+    const w = dv.getUint32(i);
+    if (w >>> 26 === 2) jumps++;
+    else if ((w & 0xffff0000) >>> 0 === 0x10000000) branches++;
+  }
+  const regions = { E: "North America", J: "Japan", P: "Europe", D: "Germany", F: "France", U: "Australia", I: "Italy", S: "Spain", A: "All regions", X: "Europe", Y: "Europe" };
+  const code = text(0x3b, 0x3f);
+  return {
+    title: text(0x20, 0x34) || "Untitled", code, region: regions[code[3]] || "Unknown",
+    size: b.length, order, entry: dv.getUint32(8), compiler: branches > jumps ? "IDO" : "KMC",
+  };
+}
+
+/* What the user dropped, from its first bytes (nothing is uploaded until they confirm). */
+const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1, 2 or PSP" }[p] || consoleOf(p)?.name || "");
+/* What installing a console's proprietary compiler pack (its first pack) means, and how its compiler is picked. */
+const CW_PACK = {
+  mwcc: { title: "CodeWarrior", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
+  msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+  msvc2005: { title: "Visual C++ 2005-2010", text: "Install Visual C++ 2005, 2008 and 2010, the compilers PC games of 2005-2012 were built with (about 600 MB): this game's program says it's one of them. It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "decompdecomp reads which Visual C++ built the game from the program itself; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+  mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "Not sure? Keep the default. Games mix versions: a file the game built with another one gets it later, when a helper finds the version its functions match with." },
+};
+// the pack the game's program asks for (a PC game's Visual C++: pcPack), else its console's first
+const packOf = (info) => info?.pack || (CW_PACK[consoleOf(info?.platform)?.packs[0]] ? consoleOf(info.platform).packs[0] : "mwcc");
+
+/* Which Visual C++ pack a 32-bit Windows program needs, from the head bytes the drop has read: scratch.describe in
+   short. A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's. Its Rich header
+   counts the files each tool built (product id << 16 | build, XORed with its key): the compiler whose build is also
+   the linker's built the game's own code, else the version that built the most files; without a Rich header, the
+   linker's version says. (tests/test_pc_debug.py keeps these ids scratch.RICH_COMPILERS' and RICH_LINKERS'.) */
+const RICH_COMPILERS = {  // version -> its compilers' product ids (whole-program ones too), as [from, to) ranges
+  "6.0": [[0x0a, 0x0c], [0x15, 0x19], [0x23, 0x25], [0x30, 0x36]], "7.0": [[0x1c, 0x1e], [0x39, 0x3b], [0x2b, 0x2d], [0x41, 0x45]],
+  "7.1": [[0x4c, 0x56], [0x5f, 0x69]], "8.0": [[0x6d, 0x77], [0x82, 0x83]], "9.0": [[0x83, 0x87], [0x89, 0x90]],
+  "10.0": [[0xaa, 0xac], [0xbc, 0xbe], [0xae, 0xb5], [0xc0, 0xc7]], "11.0": [[0xce, 0xd0], [0xd2, 0xd9]],
+  "12.0": [[0xe0, 0xe2], [0xf2, 0xf4], [0xe4, 0xeb], [0xf6, 0xfd]], "14": [[0x104, 0x106], [0x108, 0x10f]],
+};
+const RICH_LINKERS = [0x04, 0x13, 0x1e, 0x20, 0x25, 0x28, 0x3c, 0x3d, 0x47, 0x56, 0x5a, 0x78, 0x91, 0x9d, 0xba, 0xcc,
+  0xde, 0xf0, 0x102];
+function pcPack(head, pe) {
+  const word = (at) => new DataView(head.buffer).getUint32(at, true);
+  const find = (bytes, from, to, back) => {
+    for (let at = back ? to - 4 : from; back ? at >= from : at <= to - 4; at += back ? -1 : 1)
+      if (bytes.every((b, i) => head[at + i] === b)) return at;
+    return -1;
+  };
+  const end = find([0x52, 0x69, 0x63, 0x68], 0x80, pe, false);  // "Rich", then its key
+  const start = end > 0 ? find([..."DanS"].map((c, i) => c.charCodeAt(0) ^ head[end + 4 + i]), 0, end, true) : -1;
+  const files = new Map(), linkers = new Set();  // "version build" -> files it compiled; the linkers' builds
+  for (let at = start + 16; start >= 0 && at + 8 <= end; at += 8) {
+    const comp = (word(at) ^ word(end + 4)) >>> 0, count = (word(at + 4) ^ word(end + 4)) >>> 0;
+    const product = comp >>> 16, build = comp & 0xffff;
+    if (RICH_LINKERS.includes(product)) linkers.add(build);
+    const version = Object.keys(RICH_COMPILERS).find((v) => RICH_COMPILERS[v].some(([lo, hi]) => product >= lo && product < hi));
+    if (version) files.set(`${version} ${build}`, (files.get(`${version} ${build}`) || 0) + count);
+  }
+  const most = (counts) => [...counts].reduce((best, kv) => (kv[1] > best[1] ? kv : best))[0];
+  let version;
+  if (!files.size) version = String(head[pe + 24 + 2]);  // the linker's major version: 6, 7, 8, 9, 10...
+  else if ([...files.keys()].some((k) => linkers.has(+k.split(" ")[1]))) version = most([...files].filter(([k]) => linkers.has(+k.split(" ")[1])));
+  else {
+    const byVersion = new Map();
+    for (const [k, n] of files) byVersion.set(k.split(" ")[0], (byVersion.get(k.split(" ")[0]) || 0) + n);
+    version = most(byVersion);
+  }
+  return parseFloat(version) >= 8 ? "msvc2005" : "msvc";  // (newer than 2010: the closest the packs have, 2010)
+}
+const MB = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KiB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MiB`);
+
+/* A DS ROM (consoles/nds/scratch.is_nds): the header's own CRC-16 is right and the ARM9 program sits in main RAM. */
+function isNds(head, dv) {
+  if (head.length < 0x200) return false;
+  let crc = 0xffff;
+  for (let i = 0; i < 0x15e; i++) {
+    crc ^= head[i];
+    for (let b = 0; b < 8; b++) crc = crc & 1 ? (crc >>> 1) ^ 0xa001 : crc >>> 1;
+  }
+  const off = dv.getUint32(0x20, true), entry = dv.getUint32(0x24, true), ram = dv.getUint32(0x28, true), size = dv.getUint32(0x2c, true);
+  return crc === dv.getUint16(0x15e, true) && off >= 0x200 && ram >= 0x02000000 && ram < 0x02400000 && entry >= ram && entry < ram + size;
+}
+
+/* A .cso (a compressed UMD or PlayStation disc; a .zso is its LZ4 kind): its CISO header starts with its own size
+   (0x18, or 0 from older tools) where a GameCube or Wii CISO has its block size, 2 MiB by default
+   (consoles/ps2/cso.py and consoles/gc_wii/scratch.py tell them apart the same way). */
+const PSP_CISO_HEADER_SIZES = [0, 0x18];
+const isPspCiso = (head, magic = "CISO") => head.length >= 8 && String.fromCharCode(...head.slice(0, 4)) === magic
+  && PSP_CISO_HEADER_SIZES.includes(new DataView(head.buffer).getUint32(4, true));
+// a PSP's ELF: a PRX module by its type, or a program whose flags name the Allegrex (a PS2's name the R5900)
+const ELF_TYPE_PSP_PRX = 0xffa0, ELF_MACH_BITS = 0x00ff0000, ELF_MACH_ALLEGREX = 0x00a20000;
+
+function identifyHead(head, file) {
+  const dv = new DataView(head.buffer);
+  const text = (a, b) => String.fromCharCode(...head.slice(a, b));
+  const ascii = (a, b) => text(a, b).split("\0")[0].replace(/[^\x20-\x7e]/g, "").trim();
+  const stem = file.name.replace(/\.[^.]*$/, "");
+  const base = { title: stem, size: file.size };
+  const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
+  if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
+  if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
+    return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
+  if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
+  // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
+  // for, its SYSTEM.CNF says (the server reads it, and a CHD's too, which the browser can't look into)
+  if (text(0x8001, 0x8006) === "CD001" && ascii(0x8008, 0x8028) === "PSP GAME") return { ...base, platform: "psp", order: "UMD disc image" };
+  if (text(0x8001, 0x8006) === "CD001" || text(0x9319, 0x931e) === "CD001" || text(0x9311, 0x9316) === "CD001") return { ...base, platform: "playstation", order: "disc image" };
+  if (text(0, 8) === "MComprHD") return { ...base, platform: "playstation", order: "CHD disc image" };
+  // which PlayStation's disc a CSO holds is inside its compressed blocks: the server reads them
+  if (isPspCiso(head)) return { ...base, platform: "playstation", order: "CSO disc image" };
+  if (text(0, 4) === "\x7fELF" && head[5] === 1 && dv.getUint16(18, true) === 8) {
+    const prx = dv.getUint16(16, true) === ELF_TYPE_PSP_PRX, psp = prx || (dv.getUint32(36, true) & ELF_MACH_BITS) === ELF_MACH_ALLEGREX;
+    return { ...base, platform: psp ? "psp" : "ps2", order: prx ? "PRX module" : "ELF program", entry: dv.getUint32(24, true) };
+  }
+  if (head.length > 0x60 && dv.getUint32(0x1c) === 0xc2339f3d) return { ...base, platform: "gc", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
+  if (head.length > 0x60 && dv.getUint32(0x18) === 0x5d1c9ea3) return { ...base, platform: "wii", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
+  const packed = { "RVZ\x01": "RVZ", "WIA\x01": "WIA", WBFS: "WBFS", CISO: "CISO" }[text(0, 4)] || (dv.getUint32(0, true) === 0xb10bc001 ? "GCZ" : null);
+  if (packed) return { ...base, platform: "gcwii", order: `${packed} disc image` };
+  if (head.length >= 0x100) {  // a DOL: section offsets, addresses and sizes that make sense, entry in RAM
+    const entry = dv.getUint32(0xe0);
+    let used = 0, ok = entry >= 0x80000000 && entry < 0x81800000;
+    for (let i = 0; i < 18 && ok; i++) {
+      const off = dv.getUint32(i * 4), addr = dv.getUint32(72 + i * 4), size = dv.getUint32(144 + i * 4);
+      if (!size) continue;
+      used++;
+      ok = off >= 0x100 && off + size <= file.size && addr >= 0x80000000 && addr < 0x81800000;
+    }
+    if (ok && used) return { ...base, platform: "gc", order: "program (DOL)", entry };
+  }
+  return null;
+}
+
+/* Files people try that decompdecomp can't start from: say what they are and why, not just "no". */
+function notSupported(head, file) {
+  const text = (a, b) => String.fromCharCode(...head.slice(a, b));
+  const ext = (file.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
+  if (text(0, 2) === "MZ") {  // (a 32-bit x86 one is identifyHead's): which machine, from its PE header
+    const dv = new DataView(head.buffer), pe = head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
+    const machine = pe && pe + 6 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
+    if (machine === 0x8664) return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games come after the Visual C++ 2012 to 2015 compilers (see the roadmap, Newer Windows games).";
+    if (machine) return "That Windows program isn't for a 32-bit x86 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 .exe.";
+    return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
+  }
+  if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
+  if (ext === "gba") return "Game Boy Advance games aren't supported in this version. For those, continue a public decomp.";
+  if (text(0, 4) === "XEX2" || ext === "xex") return "That's an Xbox 360 program. Xbox 360 games aren't supported yet.";
+  if (["nsp", "xci", "nso", "nro", "nca"].includes(ext) || text(0, 4) === "NSO0" || text(0, 4) === "PFS0") return "That's a Nintendo Switch file. Switch games aren't supported yet.";
+  if (["sfc", "smc"].includes(ext)) return "That's a Super Nintendo ROM. SNES games were written in assembly, not compiled from C, so there's no C source to match.";
+  if (["nes", "gb", "gbc", "md", "gen", "sms", "gg", "pce"].includes(ext)) return "Games for that console were written in assembly, not compiled from C, so there's no C source to match.";
+  if (ext === "cue") return "That's the .cue sheet: pick the .bin file next to it (the track with the game's data, usually Track 1).";
+  if (["zip", "7z", "rar"].includes(ext)) return "That's an archive: unpack it first, then drop the game file inside.";
+  if (ext === "apk") return "Android apps aren't supported yet.";
+  if (isPspCiso(head, "ZISO") || ext === "zso") return "That's a ZSO image (LZ4-compressed), which decompdecomp can't read yet: decompress it to .iso first (maxcso --decompress does that), then drop the .iso.";
+  if (text(0, 4) === "\0PBP" || ext === "pbp") return "That's a PSP EBOOT.PBP, a container: its program (DATA.PSP inside) is encrypted. Drop the game's UMD image (.iso) instead, or extract and decrypt the program first and drop that (.elf or .prx).";
+  if (text(0, 4) === "~PSP") return "That's an encrypted PSP program. Decrypt it first and drop the decrypted .elf or .prx, or drop the game's UMD image (.iso).";
+  return null;
+}
+// 1.0.3 rewrote most of the app: every platform is being tested again, and reports are how a platform moves up
+const TRY_AND_TELL = `This version is new, so <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">tell us how it goes</a> on your game.`;
+const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (yet). For other platforms, continue a public decomp.";
+
+async function pickFile(file, extras = []) {
+  const head = new Uint8Array(await file.slice(0, 0x9400).arrayBuffer());
+  let info = identifyHead(head, file), buf = file;
+  if (!info) {
+    const why = notSupported(head, file);
+    if (why || file.size > 64 * 1024 * 1024) return toast(esc(why || NOT_A_GAME), "err");
+    buf = await file.arrayBuffer();
+    try { info = parseRom(buf); info.platform = "n64"; } catch (e) {
+      return toast(esc(NOT_A_GAME), "err");
+    }
+  }
+  // only a PC game's import reads them (debuginfo.py): with another game they'd be uploaded for nothing
+  picked = { buf, info, name: file.name, extras: info.platform === "win32" ? extras : [] };
+  if (!S.st) await loadState().catch(() => {});  // dropped before the page finished loading: the compiler lists
+  $("romFile").textContent = file.name;
+  $("romTitle").textContent = info.title;
+  const p = info.platform;
+  const facts = p === "n64"
+    ? [["Game code", info.code || "—"], ["Region", info.region], ["Size", MB(info.size)], ["Format", info.order],
+       ["Entry", hex8(info.entry)], ["Looks like", info.compiler === "IDO" ? "IDO" : "GCC (KMC)"]]
+    : [["Platform", platformName(p)], ["Format", info.order], ["Size", MB(info.size)],
+       info.code ? ["Game ID", info.code] : ["Entry", info.entry != null ? hex8(info.entry) : "from the disc"],
+       ["Project", consoleOf(p)?.layout || ""], ...(picked.extras.length ? [["Debug symbols", picked.extras.map((f) => f.name).join(", ")]] : [])];
+  $("romFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
+  const level = platformStatus(p);
+  $("romStatus").hidden = !level;
+  $("romStatus").className = `plat-status ${level || ""}`;
+  $("romStatus").innerHTML = level === "recommended"
+    ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod. ${TRY_AND_TELL}`
+    : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works, and needs more games tried on it. ${TRY_AND_TELL}`;
+  if (consoleOf(p)?.games_in_folders) {  // a dropped .exe comes alone: its path brings the game's own DLLs along
+    $("romStatus").insertAdjacentHTML("beforeend", ` A dropped file comes alone: for the game's own DLLs too, <button class="link-btn" type="button" id="romByPath">use its path</button> (its folder, or the .exe) instead.`);
+    $("romByPath").onclick = (e) => { e.stopPropagation(); resetDrop(); askPath(); };
+  }
+  setupCompilers(info);
+  $("dropIdle").hidden = true;
+  $("dropPicked").hidden = false;
+  updateAnalyse();
+}
+
+function setupCompilers(info) {
+  const p = info.platform, select = $("compilerPick"), note = $("compilerNote");
+  const con = consoleOf(p) || { mode: "", compilers: [], packs: [], default_compiler: "" };
+  $("compilerRow").hidden = false; note.hidden = true; $("mwConsent").hidden = true; $("mwAccept").checked = false;
+  $("allCompilers").hidden = true;
+  // where the import recognises library code: the project covers the game's own code, or the whole program
+  $("scopeRow").hidden = !con.sets_aside; $("scopePick").value = "game";
+  if (con.mode === "rom" || p === "playstation") {
+    // every compiler of its console first, so the import's test tries them all (a guess from the program can miss)
+    const missing = missingCompilers(p), owned = missing.filter((t) => t.license === "proprietary");
+    $("allCompilers").hidden = !missing.length;
+    $("allAccept").checked = !owned.length;  // consent to proprietary software is the user's tick, never ours
+    $("allText").textContent = `Install the ${plural(missing.length, "missing compiler")} first, so the import tests which one built the game`
+      + (owned.length ? `. ${owned.map((t) => t.name).join(" and ")} ${owned.length > 1 ? "are" : "is"} proprietary software, kept by the decomp community: tick this only if you accept that.` : ".");
+  }
+  if (con.mode === "rom") {
+    if (info.order.endsWith("disc image")) {
+      $("compilerRow").hidden = true; note.hidden = false;
+      note.textContent = "The compiler is picked from the disc's program, then tested on its code. You can change it later.";
+    } else fillCompilers(select, info.compiler === "IDO" ? "ido-7.1" : con.default_compiler, con.id);
+    return;
+  }
+  // a project of the community's kind: the compiler versions its build knows (a compressed GameCube or Wii disc: both)
+  const shown = p === "gcwii" ? [consoleOf("gc"), consoleOf("wii")].filter(Boolean) : [con];
+  select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${c.compilers.map((v) => `<option value="${esc(v.id)}" ${v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc") ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</optgroup>`).join("")
+    + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
+  const pack = packOf(info);
+  note.hidden = false;
+  note.textContent = CW_PACK[pack].note;
+  $("mwText").textContent = CW_PACK[pack].text;
+  $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
+}
+
+/* The compilers of a game's console this computer doesn't have (every PlayStation's for a disc not read yet: a CHD
+   can be a PSP game's too). */
+function missingCompilers(p) {
+  const cons = p === "playstation" ? ["ps", "ps2", "psp"].map(consoleOf) : [consoleOf(p)];
+  const tcs = S.st?.toolchains || [];
+  return cons.filter(Boolean).flatMap((c) => c.installable || []).map((id) => tcs.find((t) => t.id === id)).filter((t) => t && !t.installed);
+}
+
+function updateAnalyse() {
+  const needsConsent = !$("mwConsent").hidden;
+  $("analyse").disabled = !$("own").checked || (needsConsent && !$("mwAccept").checked);
+}
+$("mwAccept").addEventListener("change", updateAnalyse);
+
+function fillCompilers(select, current, platform) {
+  const own = (consoleOf(platform)?.compilers || []).map((c) => c.id);  // the console's compilers
+  const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
+  if (own.length && !tcs.length) {  // versions of a compiler pack (DS's CodeWarriors), not toolchains of their own
+    select.innerHTML = consoleOf(platform).compilers.map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+    return;
+  }
+  select.innerHTML = tcs.map((t) => {
+    const note = !t.supported ? " (not available on this computer)" : t.installed ? "" : t.license === "proprietary" ? " (install in Compilers & tools)" : " (will be installed)";
+    return `<option value="${esc(t.id)}" ${t.id === current ? "selected" : ""} ${t.supported ? "" : "disabled"}>${esc(t.name)} · ${esc(t.use)}${note}</option>`;
+  }).join("");
+}
+
+async function runImport(query, file, title, name = "") {
+  $("dropIdle").hidden = true;
+  $("dropPicked").hidden = true;
+  $("dropBusy").hidden = false;
+  $("busyTitle").textContent = title;
+  $("busyStep").textContent = "starting";
+  $("jobLog").textContent = "";
+  $("impUp").hidden = !(file instanceof Blob);
+  $("impWork").hidden = file instanceof Blob;
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    $("busyTime").textContent = s >= 3 ? ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
+  }, 1000);
+  try {
+    let started;
+    if (file instanceof Blob) {
+      started = await uploadFile(`/api/import?${query}&name=${encodeURIComponent(name || file.name || "game.bin")}`, file,
+        (p) => { $("impUp").firstElementChild.style.width = (p * 100).toFixed(1) + "%"; $("busyTitle").textContent = p < 1 ? `Copying ${title.replace(/^\w+ /, "")} into decompdecomp… ${(p * 100).toFixed(0)}%` : title; });
+    } else {
+      started = await api(`/api/import?${query}`, { method: "POST", raw: file ?? new ArrayBuffer(0) });
+    }
+    $("impUp").hidden = true;
+    $("impWork").hidden = false;
+    const res = await followJob(started.job, $("jobLog"), (log) => {
+      const last = log.filter((l) => l.trim()).pop();
+      if (last) $("busyStep").textContent = last.trim().replace(/\s+/g, " ").slice(0, 120);
+    });
+    loadNav();
+    location.hash = `#/p/${res.slug}`;
+  } catch (e) {
+    importFailed(name || title.replace(/^\w+ |…$/g, ""), e, $("jobLog").textContent);
+  } finally { clearInterval(tick); $("busyTime").textContent = ""; $("impWork").hidden = true; }
+}
+
+/* A failed import stays on screen with what happened, ready to report: a toast is gone before it's read. */
+function importFailed(name, e, logText) {
+  const job = e.job || {};
+  const log = (job.log ? job.log.join("\n") : logText || "").trim();
+  $("dropIdle").hidden = true; $("dropPicked").hidden = true; $("dropBusy").hidden = true;
+  $("dropError").hidden = false;
+  $("errName").textContent = name || "the game";
+  $("errMsg").textContent = e.message;
+  $("errLog").textContent = [log, job.trace].filter(Boolean).join("\n\n") || "(nothing was logged)";
+  // the log shows here: a link would leave the app's window for the user's browser, which the app doesn't answer
+  $("errLogLink").onclick = async () => {
+    try {
+      const res = await fetch("/api/log");
+      $("errLog").textContent = await res.text();
+      $("errLog").closest("details").open = true;
+      $("errLog").scrollTop = $("errLog").scrollHeight;
+    } catch (e) { toast(esc(e.message), "err"); }
+  };
+  $("errCopy").onclick = async () => {
+    if (await copyText(bugReport([`Importing: ${name}`, `Error: ${e.message}`], [log, job.trace].filter(Boolean).join("\n")))) toast("Copied: paste it into a GitHub issue");
+    else toast("Couldn't reach the clipboard: select the text under What happened instead", "err");
+  };
+}
+$("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
+
+async function ensureCodeWarrior() {
+  if ($("mwConsent").hidden) return;
+  const id = packOf(picked?.info);
+  $("busyTitle").textContent = `Installing ${CW_PACK[id].title}…`;
+  const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true } });
+  await followJob(job, $("jobLog"));
+  await loadState();
+}
+
+$("analyse").onclick = async () => {
+  if (!picked || $("analyse").disabled) return;
+  const tc = $("compilerRow").hidden ? "" : $("compilerPick").value;
+  const title = `Analysing ${picked.info.title}…`;
+  if (!$("mwConsent").hidden) {
+    $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
+    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info)].title, e, $("jobLog").textContent); return; }
+  }
+  // the debug files go after the game in the same upload; the server cuts them off and puts them beside it
+  const body = new Blob([picked.buf, ...picked.extras]);
+  const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
+  const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
+  const extras = picked.extras.length ? `&extras=${encodeURIComponent(JSON.stringify(picked.extras.map((f) => [f.name, f.size])))}` : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}${extras}`, body, title, picked.name);
+};
+$("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
+function askPath(why = "") {
+  // the game isn't known yet: the scope question shows when any platform's import recognises library code
+  const asks = (S.st?.consoles || []).some((c) => c.sets_aside);
+  const body = dialog("Use a file or folder on this computer", `${why ? `<p>${esc(why)}</p>` : ""}<p class="muted">For big disc images, and for a Windows game with DLLs of its own: decompdecomp reads the game where it is instead of copying it through the browser. A Windows game's folder, or its .exe, brings the game's own DLLs along (the import says which it found, and which it left out).</p>
+    <label class="field"><span>Path to the game file, or a Windows game's folder</span><span class="pick-row"><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="ppPath" data-title="Your copy of the game">File…</button><button class="ghost small-btn" type="button" data-pick="folder" data-for="ppPath" data-title="The game's folder">Folder…</button></span></label>
+    ${asks ? `<label class="field"><span>What should this project cover? (where decompdecomp recognises library code)</span><select id="ppScope">
+      <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>
+      <option value="program">The whole program: every function is decompiled and counted</option></select></label>` : ""}
+    <label class="check"><input type="checkbox" id="ppOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
+    <div class="row"><button class="primary" id="ppGo" type="button" disabled>Start decompiling</button><button class="ghost" data-close type="button">Cancel</button></div>`);
+  body.querySelector("#ppOwn").onchange = () => { $("ppGo").disabled = !$("ppOwn").checked; };
+  body.querySelector("#ppGo").onclick = () => {
+    const path = $("ppPath").value.trim();
+    if (!path) return;
+    const scope = asks ? $("ppScope").value : "";
+    closeDialog();
+    runImport(`confirmed=1&path=${encodeURIComponent(path)}${scope ? `&scope=${scope}` : ""}`, undefined, "Analysing your game…");
+  };
+}
+$("demoBtn").onclick = () => runImport("demo=1", undefined, "Opening Demo Quest 64…");
+
+/* A "Choose…" button beside a path: the system's own chooser (app/picker.py) fills it in. Typing still works. */
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-pick]");
+  if (!b) return;
+  e.preventDefault();  // (inside a label: not a click on its input)
+  b.disabled = true;
+  try {
+    const { path } = await api("/api/pick", { method: "POST", body: { kind: b.dataset.pick, title: b.dataset.title || "" } });
+    if (path) { $(b.dataset.for).value = path; $(b.dataset.for).dispatchEvent(new Event("input")); }
+  } catch (err) { toast(esc(err.message), "err"); } finally { b.disabled = false; }
+});
+
+/* Open a saved project (app/saves.py): a save folder, or the git repository it was pushed to, and the user's own copy
+   of the game (never in the save). Like an import, it runs in the background and opens the project when it's done. */
+let restoreJob = null, restoreInput = { source: "", path: "", own: false }, restorePolling = false;
+let restoreStarting = false, restoreCancelling = false, restoreError = "";
+const restoreBusy = () => restoreStarting || restoreJob?.state === "running";
+function renderRestore() {
+  if (!$("rsGo")) return;
+  const busy = restoreBusy();
+  $("rsWork").hidden = !busy || !!restoreError;
+  const message = restoreError || restoreJob?.error;
+  $("rsStatus").textContent = message ? `Opening saved project stopped: ${message}`
+    : restoreCancelling ? "Cancelling saved project opening…" : busy ? "Opening saved project…"
+    : restoreJob?.state === "cancelled" ? "Saved project opening cancelled."
+    : restoreJob?.state === "done" ? "Saved project opened." : "";
+  $("rsStatus").hidden = !$("rsStatus").textContent;
+  $("rsGo").disabled = busy || !restoreInput.own;
+  $("rsGo").textContent = busy ? "Opening…" : "Open it";
+  $("rsCancel").disabled = restoreCancelling;
+  $("rsCancel").textContent = restoreCancelling ? "Cancelling…" : busy ? "Cancel opening" : "Cancel";
+  for (const id of ["rsSource", "rsGame", "rsOwn"]) $(id).disabled = busy;
+  $("dialogBody").querySelectorAll("[data-pick]").forEach((b) => { b.disabled = busy; });
+  showJobError($("rsLog"), restoreError || restoreJob?.error || "");
+  // showJobError clears the log when there is no error. Clear first, then paint the latest poll's lines.
+  $("rsLog").textContent = restoreStarting ? "Starting saved project…" : (restoreJob?.log || []).join("\n");
+  $("rsLog").hidden = !$("rsLog").textContent;
+}
+function openRestore() {
+  const running = restoreBusy();
+  const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. The game itself is never in a save: you add your own copy, and decompdecomp checks it's the same game.</p>
+    <label class="field"><span>The save: its folder, or the git address you pushed it to</span><span class="pick-row"><input id="rsSource" class="mono" placeholder="/home/you/saves/my-game, or a git address"><button class="ghost small-btn" type="button" data-pick="folder" data-for="rsSource" data-title="The saved project's folder">Choose…</button></span></label>
+    <label class="field"><span>Your copy of the game: its path on this computer</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
+    <label class="check"><input type="checkbox" id="rsOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
+    <div class="row"><button class="primary" id="rsGo" type="button" disabled>${running ? "Opening…" : "Open it"}</button><button class="ghost" id="rsCancel" type="button">${running ? "Cancel opening" : "Cancel"}</button></div>
+    <p class="muted small" id="rsStatus" role="status" hidden></p>
+    <div class="workbar" id="rsWork" role="progressbar" aria-label="Opening saved project" hidden><i></i></div>
+    <pre class="joblog tall" id="rsLog"${running ? "" : " hidden"}></pre>`, "restore");
+  $("rsSource").value = restoreInput.source;
+  $("rsGame").value = restoreInput.path;
+  $("rsOwn").checked = restoreInput.own;
+  const remember = () => {
+    restoreInput = { source: $("rsSource").value, path: $("rsGame").value, own: $("rsOwn").checked };
+    renderRestore();
+  };
+  $("rsSource").oninput = remember;
+  $("rsGame").oninput = remember;
+  $("rsOwn").onchange = remember;
+  body.querySelector("#rsCancel").onclick = async () => {
+    if (restoreBusy()) {
+      restoreCancelling = true;
+      renderRestore();
+      // A pending opening request has no ID yet; cancel it as soon as its ID arrives.
+      if (restoreJob?.state === "running") await cancelRestore();
+      return;
+    }
+    restoreInput = { source: "", path: "", own: false };
+    restoreJob = null; restoreError = "";
+    closeDialog();
+  };
+  body.querySelector("#rsGo").onclick = async () => {
+    if (restoreBusy() || !restoreInput.own) return;
+    const source = restoreInput.source.trim(), path = restoreInput.path.trim();
+    if (!source || !path) {
+      restoreError = "Say where the save is and where your copy of the game is.";
+      renderRestore(); return;
+    }
+    restoreStarting = true; restoreJob = null; restoreError = "";
+    renderRestore();
+    try {
+      const { job } = await api("/api/restore", { method: "POST", body: { source, path, confirmed: true } });
+      restoreJob = { id: job, state: "running", log: [] };
+      restoreStarting = false;
+      if (restoreCancelling) await cancelRestore();
+      renderRestore();
+      await watchRestore(job);
+    } catch (e) {
+      restoreStarting = false; restoreCancelling = false; restoreError = e.message;
+      renderRestore();
+    }
+  };
+  renderRestore();
+  if (restoreJob?.state === "running") watchRestore(restoreJob.id);
+}
+
+async function cancelRestore() {
+  try {
+    await api("/api/job/cancel", { method: "POST", body: { id: restoreJob.id } });
+    // A failed status request must not leave an accepted cancellation invisible until the drawer is reopened.
+    if (restoreJob?.state === "running") watchRestore(restoreJob.id);
+  } catch (e) {
+    restoreCancelling = false;
+    restoreError = e.message;
+    renderRestore();
+  }
+}
+
+async function watchRestore(id) {
+  if (restorePolling || restoreJob?.id !== id || restoreJob.state !== "running") return;
+  restorePolling = true;
+  try {
+    for (;;) {
+      const job = await api(`/api/job?id=${id}`);
+      restoreJob = job;
+      if (job.state !== "running") {
+        restoreCancelling = false;
+        restoreError = "";
+        renderRestore();
+        if (job.state !== "done") return;
+        restoreInput = { source: "", path: "", own: false };
+        restoreJob = null; restoreError = "";
+        toast(`Saved project opened: ${plural(job.result.matched || 0, "matched function")} back${job.result.lost && job.result.lost.length ? `; ${job.result.lost.length} no longer match` : ""}.`, "match");
+        if (S.dialogKind === "restore") closeDialog();
+        loadNav(); location.hash = `#/p/${job.result.slug}`;
+        return;
+      }
+      renderRestore();
+      await sleep(JOB_POLL_MS);
+    }
+  } catch (e) {
+    restoreError = e.message;
+    renderRestore();
+  } finally { restorePolling = false; }
+}

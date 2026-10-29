@@ -1,0 +1,62 @@
+[project]
+name = "decompnet"
+version = "1.0.7-alpha.1"
+description = "A desktop app where AI agents decompile the games you own into C that rebuilds them byte for byte. Runs locally."
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "LICENSE-decomp.wtf"]
+authors = [
+    { name = "sam wolfs", email = "appelsiensam@gmail.com" },  # decomp.wtf, up to 0.10.6
+    { name = "NDelic" },  # decompdecomp
+]
+requires-python = ">=3.12"
+dependencies = [
+    "capstone>=5.0.9",
+    "mcp>=2.3.0",
+    "pyelftools>=0.33",
+    "splat64[mips]>=0.50.1",
+    "spimdisasm>=1.42.4",
+    "rabbitizer>=1.16.2",
+    "httpx>=0.28",
+    "uvicorn>=0.30",
+    "ninja>=1.11",  # builds GameCube/Wii (dtk) and other ninja-based decomp projects
+    "zstandard>=0.23; sys_platform == 'linux'",  # the .zst runtime old compilers need, without the zstd command
+    "pywebview>=6.2.1; sys_platform == 'win32'",  # the tested WinForms/WebView2 bridge and native shortcut support
+    "pyobjc-framework-Cocoa>=11.0; sys_platform == 'darwin'",  # native macOS window, dialogs, and Finder launcher
+    "pyobjc-framework-WebKit>=11.0; sys_platform == 'darwin'",  # WKWebView with the private window user agent
+    "tzdata>=2025.2; sys_platform == 'win32'",  # Windows has no IANA timezone database for helpers' reset times
+]
+
+[project.urls]
+Homepage = "https://github.com/n-delic/decompdecomp"
+Source = "https://github.com/n-delic/decompdecomp"
+
+[project.scripts]
+decomp = "decompnet.app.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.18,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff==0.14.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+# the website's tooling isn't decompdecomp's code; ninja_syntax.py is ninja's own, copied into the project templates
+extend-exclude = ["site", "src/decompnet/consoles/*/project_template/tools/ninja_syntax.py"]
+
+[tool.ruff.lint]
+# Only rules that find real problems or real inconsistencies: no formatter, no line length (docs/CONVENTIONS.md, "Linting")
+select = ["F", "I", "E9", "B006", "B008", "B023"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["decompnet"]
+
+[tool.pytest.ini_options]
+# the room tests drive the room server through Starlette's TestClient, which warns about the timeouts real clients use
+filterwarnings = ["ignore:You should not use the 'timeout' argument with the TestClient"]

@@ -1,6 +1,0 @@
-[submodule "vendor/PS2Recomp"]
-	path = vendor/PS2Recomp
-	url = https://github.com/ran-j/PS2Recomp.git
-[submodule "vendor/decompdecomp"]
-	path = vendor/decompdecomp
-	url = https://github.com/n-delic/decompdecomp.git

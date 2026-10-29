@@ -93,18 +93,21 @@ README.md
 .recomp.json
 tools/                  Reproducibility scripts only
 docs/                   Public status and community issue material
-vendor/                 PS2Recomp and decompdecomp pinned submodules
+vendor/                 PS2Recomp and decompdecomp vendored source
 artifacts/              Local ISO/decomp/runtime output; ignored
 build/                  Local native build output; ignored
 ```
 
-Clone with dependency sources:
+The `vendor/` directory is intentionally part of this repository. It contains the dependency source needed to inspect and build the project; it is not a Git submodule.
+
+Because this is a single repository, a normal clone is sufficient:
 
 ```powershell
-git clone --recurse-submodules <repository-url>
+git clone <repository-url>
 ```
 
-The public repository contains upstream submodule pointers. Local diagnostic edits used during runtime bring-up are still uncommitted inside the PS2Recomp working tree and are not represented as upstream commits.
+The upstream license files inside `vendor/` must remain intact.
+
 
 ## Resuming the investigation
 
