@@ -103,7 +103,7 @@ tools/                        Reproducibility and ISO pipeline scripts
 docs/                         Repository-level build/publishing notes
 ```
 
-The actual directory is `games/hmawlse/`; the leading dot in the map above is not part of the path.
+The game-specific project is under `games/hmawlse/`; generated game data remains local and ignored.
 
 ## What is not included
 
