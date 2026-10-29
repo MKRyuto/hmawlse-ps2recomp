@@ -33,7 +33,8 @@ Feedback is useful but is not the only workstream. A clean local run without the
 - The generated getter at guest `0x1196F8` reads only byte `object+1`; it does not write the resource state.
 - The consumer at `0x17A750` accepts status `0x3` as complete. Status `0x2` returns to the polling path, so treating `0x2` as complete would be an experiment, not a faithful fix.
 - The IOP path executes DVCI `0x400`, invokes the guest callback, and returns a buffer. That proves dispatch reaches the callback; it does not prove that the callback updates `0x49DA78+1`.
-- The callback `0x1303E0` enters the guest queue path `0x12F668 -> 0x131C88`, which dispatches registered function pointers from the queue table. Neither callback wrapper directly writes the resource status byte, so the next trace must identify the queued handler and its target object.
+- Static control-flow now shows `0x17A560 -> 0x11AD00 -> 0x132190` registering callback target `0x17A5C0` in queue table `0x5DC770`. The registered `0x17A5C0` handler only adjusts/restores the stack and returns; this is a lead, not proof that it is the missing status writer.
+- `0x132150` and `0x132190` are separate entry points sharing generated file `sub_001320F8_0x1320f8.cpp`; the runtime function table maps both entries, so this is not currently explained by a missing entry-point dispatch.
 
 - The clean no-bypass run remains in the `0x17A868`/`0x17A87C` polling path while the host surface stays black. This is the baseline for further traces.
 
